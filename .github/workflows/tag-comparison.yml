@@ -5,13 +5,16 @@ on:
       source:
         description: 'Source branch'
         required: true
-        default: 'staging'
-        type: string
+        default: 'main'
+        options:
+          - main
       target:
         description: 'Target branch'
         required: true
-        default: 'main'
-        type: string
+        default: 'staging'
+        type: choice
+        options:
+          - staging
 jobs:
   compare-tags:
     runs-on: ubuntu-latest
@@ -26,7 +29,7 @@ jobs:
         run: |
           SOURCE_BRANCH="${{ github.event.inputs.source }}"
           TARGET_BRANCH="${{ github.event.inputs.target }}"
-          
+
           echo "## Tag Comparison Report" >> $GITHUB_STEP_SUMMARY
           echo "Comparing **$SOURCE_BRANCH** (source) vs **$TARGET_BRANCH** (target)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -75,7 +78,7 @@ jobs:
         run: |
           SOURCE_BRANCH="${{ github.event.inputs.source }}"
           TARGET_BRANCH="${{ github.event.inputs.target }}"
-          
+
           mkdir -p tag-comparison-results
 
           # Get tags from source branch
