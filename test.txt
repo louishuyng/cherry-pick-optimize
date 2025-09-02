@@ -1,1 +1,5 @@
+<<<<<<< HEAD
 Hi
+=======
+Hi 1035 test test
+>>>>>>> 6ea66e4 (feat[REG-1035]: test test (#3))
