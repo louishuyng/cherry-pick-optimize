@@ -140,7 +140,7 @@ jobs:
             # Create PR body
             PR_BODY="## Cherry-pick Summary
 
-This PR cherry-picks missing tags with prefix \`${{ inputs.tag_prefix }}\` from \`${{ inputs.source_branch }}\` to \`${{ inputs.target_branch }}\`.
+This PR cherry-picks missing tags with prefix \\`${{ inputs.tag_prefix }}\\` from \\`${{ inputs.source_branch }}\\` to \\`${{ inputs.target_branch }}\\`.
 
 ### Successfully cherry-picked tags:
 \`\`\`
