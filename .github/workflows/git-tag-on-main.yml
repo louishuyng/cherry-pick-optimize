@@ -1,0 +1,73 @@
+name: Git Tag on Main
+on:
+  push:
+    branches:
+      - main
+jobs:
+  create-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract REG number from commit message
+        id: extract-reg
+        run: |
+          # Get the latest commit message
+          COMMIT_MSG=$(git log -1 --pretty=format:"%s")
+          echo "Commit message: $COMMIT_MSG"
+
+          # Extract REG-xxxx pattern
+          if [[ $COMMIT_MSG =~ \[REG-([0-9]+)\] ]]; then
+            REG_NUMBER=${BASH_REMATCH[1]}
+            echo "Found REG number: $REG_NUMBER"
+            echo "reg_number=$REG_NUMBER" >> $GITHUB_OUTPUT
+            echo "has_reg=true" >> $GITHUB_OUTPUT
+          else
+            echo "No REG pattern found in commit message"
+            echo "has_reg=false" >> $GITHUB_OUTPUT
+          fi
+      - name: Determine next version
+        id: version
+        if: steps.extract-reg.outputs.has_reg == 'true'
+        run: |
+          REG_NUMBER=${{ steps.extract-reg.outputs.reg_number }}
+          BASE_TAG="REG-${REG_NUMBER}"
+
+          # Get all existing tags for this REG number
+          EXISTING_TAGS=$(git tag -l "${BASE_TAG}.*" | sort -V)
+
+          if [ -z "$EXISTING_TAGS" ]; then
+            # No existing tags, start with 001
+            VERSION="001"
+          else
+            # Get the highest version number
+            LAST_TAG=$(echo "$EXISTING_TAGS" | tail -n 1)
+            LAST_VERSION=$(echo "$LAST_TAG" | sed "s/${BASE_TAG}\.//")
+            NEXT_VERSION=$((10#$LAST_VERSION + 1))
+            VERSION=$(printf "%03d" $NEXT_VERSION)
+          fi
+
+          NEW_TAG="${BASE_TAG}.${VERSION}"
+          echo "New tag will be: $NEW_TAG"
+          echo "new_tag=$NEW_TAG" >> $GITHUB_OUTPUT
+      - name: Create and push tag
+        if: steps.extract-reg.outputs.has_reg == 'true'
+        run: |
+          NEW_TAG=${{ steps.version.outputs.new_tag }}
+          COMMIT_SHA=$(git rev-parse HEAD)
+
+          # Create the tag
+          git tag "$NEW_TAG" "$COMMIT_SHA"
+
+          # Push the tag
+          git push origin "$NEW_TAG"
+
+          echo "Created and pushed tag: $NEW_TAG"
+      - name: Skip tagging
+        if: steps.extract-reg.outputs.has_reg == 'false'
+        run: |-
+          echo "Skipping tag creation - commit message does not contain [REG-xxxx] pattern"
+
