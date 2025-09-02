@@ -151,13 +151,6 @@ $(echo "$missing_tags" | head -n $success_count)
 - ✅ Successful: $success_count
 - ❌ Failed: $(echo $failed_tags | wc -w)
 
-$(if [ -n "$failed_tags" ]; then
-  echo "### Failed tags (manual intervention required):
-\`\`\`
-$failed_tags
-\`\`\`"
-fi)
-
 ### Original Request:
 - **Tag prefix**: \`${{ inputs.tag_prefix }}\`
 - **Source branch**: \`${{ inputs.source_branch }}\`
@@ -165,6 +158,16 @@ fi)
 
 ---
 🤖 *This PR was automatically created by the Cherry Pick Missing Tags workflow*"
+          
+          # Add failed tags section if any
+          if [ -n "$failed_tags" ]; then
+            PR_BODY="$PR_BODY
+
+### Failed tags (manual intervention required):
+\`\`\`
+$failed_tags
+\`\`\`"
+          fi
 
             # Create the PR using GitHub CLI
             gh pr create \
