@@ -6,6 +6,7 @@ on:
         description: 'Source branch'
         required: true
         default: 'main'
+        type: choice
         options:
           - main
       target:
