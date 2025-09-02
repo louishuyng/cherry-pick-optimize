@@ -1,6 +1,17 @@
-name: Compare Tags Between Staging and Main
+name: Compare Tags Between Two branches
 on:
   workflow_dispatch:
+    inputs:
+      source:
+        description: 'Source branch'
+        required: true
+        default: 'staging'
+        type: string
+      target:
+        description: 'Target branch'
+        required: true
+        default: 'main'
+        type: string
 jobs:
   compare-tags:
     runs-on: ubuntu-latest
@@ -11,109 +22,85 @@ jobs:
           fetch-depth: 0
       - name: Fetch all tags
         run: git fetch --tags
-      - name: Compare tags between staging and main
+      - name: Compare tags between source and target
         run: |
+          SOURCE_BRANCH="${{ github.event.inputs.source }}"
+          TARGET_BRANCH="${{ github.event.inputs.target }}"
+          
           echo "## Tag Comparison Report" >> $GITHUB_STEP_SUMMARY
+          echo "Comparing **$SOURCE_BRANCH** (source) vs **$TARGET_BRANCH** (target)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          # Get tags from main branch
-          main_tags=$(git tag --merged origin/main | grep -E '^REG-[0-9]+\.' | sort -V)
+          # Get tags from source branch
+          source_tags=$(git tag --merged origin/$SOURCE_BRANCH | grep -E '^REG-[0-9]+\.' | sort -V)
 
-          # Get tags from staging branch
-          staging_tags=$(git tag --merged origin/staging | grep -E '^REG-[0-9]+\.' | sort -V)
+          # Get tags from target branch
+          target_tags=$(git tag --merged origin/$TARGET_BRANCH | grep -E '^REG-[0-9]+\.' | sort -V)
 
-          echo "### Tags in main branch:"
-          echo "$main_tags"
+          echo "### Tags in $SOURCE_BRANCH branch:"
+          echo "$source_tags"
           echo ""
 
-          echo "### Tags in staging branch:"
-          echo "$staging_tags"
+          echo "### Tags in $TARGET_BRANCH branch:"
+          echo "$target_tags"
           echo ""
 
-          # Find tags in staging but not in main
-          staging_only=$(comm -13 <(echo "$main_tags") <(echo "$staging_tags"))
+          # Find tags in source but not in target (missing in target)
+          missing_in_target=$(comm -23 <(echo "$source_tags" | sort) <(echo "$target_tags" | sort))
 
-          # Find tags in main but not in staging
-          main_only=$(comm -23 <(echo "$main_tags") <(echo "$staging_tags"))
-
-          echo "### Tags in staging but not in main (with REG-xxxx prefix):"
-          if [ -n "$staging_only" ]; then
-            echo "$staging_only" | sed 's/\(REG-[0-9]\+\)\..*/\1/' | sort -u
+          echo "### Tags missing in $TARGET_BRANCH (present in $SOURCE_BRANCH but not in $TARGET_BRANCH):"
+          if [ -n "$missing_in_target" ]; then
+            echo "$missing_in_target" | sed 's/\(REG-[0-9]\+\)\..*/\1/' | sort -u
             echo ""
             echo "**Raw tags:**"
-            echo "$staging_only"
+            echo "$missing_in_target"
           else
-            echo "No unique tags in staging"
-          fi
-          echo ""
-
-          echo "### Tags in main but not in staging (with REG-xxxx prefix):"
-          if [ -n "$main_only" ]; then
-            echo "$main_only" | sed 's/\(REG-[0-9]\+\)\..*/\1/' | sort -u
-            echo ""
-            echo "**Raw tags:**"
-            echo "$main_only"
-          else
-            echo "No unique tags in main"
+            echo "No tags missing in $TARGET_BRANCH"
           fi
           echo ""
 
           # Add to GitHub summary
-          echo "### Tags in staging but not in main (REG-xxxx format):" >> $GITHUB_STEP_SUMMARY
-          if [ -n "$staging_only" ]; then
-            echo "$staging_only" | sed 's/\(REG-[0-9]\+\)\..*/\1/' | sort -u >> $GITHUB_STEP_SUMMARY
+          echo "### Tags missing in $TARGET_BRANCH (REG-xxxx format):" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$missing_in_target" ]; then
+            echo "$missing_in_target" | sed 's/\(REG-[0-9]\+\)\..*/\1/' | sort -u >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "**Raw tags:**" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "$staging_only" >> $GITHUB_STEP_SUMMARY
+            echo "$missing_in_target" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
           else
-            echo "No unique tags in staging" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          echo "### Tags in main but not in staging (REG-xxxx format):" >> $GITHUB_STEP_SUMMARY
-          if [ -n "$main_only" ]; then
-            echo "$main_only" | sed 's/\(REG-[0-9]\+\)\..*/\1/' | sort -u >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Raw tags:**" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "$main_only" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-          else
-            echo "No unique tags in main" >> $GITHUB_STEP_SUMMARY
+            echo "No tags missing in $TARGET_BRANCH" >> $GITHUB_STEP_SUMMARY
           fi
       - name: Output results as artifacts
         run: |
+          SOURCE_BRANCH="${{ github.event.inputs.source }}"
+          TARGET_BRANCH="${{ github.event.inputs.target }}"
+          
           mkdir -p tag-comparison-results
 
-          # Get tags from main branch
-          main_tags=$(git tag --merged origin/main | grep -E '^REG-[0-9]+\.' | sort -V)
+          # Get tags from source branch
+          source_tags=$(git tag --merged origin/$SOURCE_BRANCH | grep -E '^REG-[0-9]+\.' | sort -V)
 
-          # Get tags from staging branch
-          staging_tags=$(git tag --merged origin/staging | grep -E '^REG-[0-9]+\.' | sort -V)
+          # Get tags from target branch
+          target_tags=$(git tag --merged origin/$TARGET_BRANCH | grep -E '^REG-[0-9]+\.' | sort -V)
 
-          # Find differences
-          staging_only=$(comm -13 <(echo "$main_tags") <(echo "$staging_tags"))
-          main_only=$(comm -23 <(echo "$main_tags") <(echo "$staging_tags"))
+          # Find tags missing in target
+          missing_in_target=$(comm -23 <(echo "$source_tags" | sort) <(echo "$target_tags" | sort))
 
-          # Create output files
-          echo "Tags in staging but not in main (REG-xxxx format):" > tag-comparison-results/staging-only.txt
-          if [ -n "$staging_only" ]; then
-            echo "$staging_only" | sed 's/\(REG-[0-9]\+\)\..*/\1/' | sort -u >> tag-comparison-results/staging-only.txt
+          # Create output file
+          echo "Tags missing in $TARGET_BRANCH (present in $SOURCE_BRANCH but not in $TARGET_BRANCH):" > tag-comparison-results/missing-in-target.txt
+          echo "" >> tag-comparison-results/missing-in-target.txt
+          echo "REG-xxxx format:" >> tag-comparison-results/missing-in-target.txt
+          if [ -n "$missing_in_target" ]; then
+            echo "$missing_in_target" | sed 's/\(REG-[0-9]\+\)\..*/\1/' | sort -u >> tag-comparison-results/missing-in-target.txt
+            echo "" >> tag-comparison-results/missing-in-target.txt
+            echo "Raw tags:" >> tag-comparison-results/missing-in-target.txt
+            echo "$missing_in_target" >> tag-comparison-results/missing-in-target.txt
           else
-            echo "No unique tags in staging" >> tag-comparison-results/staging-only.txt
-          fi
-
-          echo "Tags in main but not in staging (REG-xxxx format):" > tag-comparison-results/main-only.txt
-          if [ -n "$main_only" ]; then
-            echo "$main_only" | sed 's/\(REG-[0-9]\+\)\..*/\1/' | sort -u >> tag-comparison-results/main-only.txt
-          else
-            echo "No unique tags in main" >> tag-comparison-results/main-only.txt
+            echo "No tags missing in $TARGET_BRANCH" >> tag-comparison-results/missing-in-target.txt
           fi
       - name: Upload comparison results
         uses: actions/upload-artifact@v4
         with:
           name: tag-comparison-results
           path: tag-comparison-results/
-

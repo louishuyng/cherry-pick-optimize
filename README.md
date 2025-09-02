@@ -60,7 +60,10 @@ Compares tags between staging and main branches:
 
 ### Step 1: Compare Tags
 1. Navigate to **Actions** → **Compare Tags Between Staging and Main**
-2. Click **Run workflow** to identify missing tags
+2. Configure parameters:
+   - **Target branch**: Target branch
+   - **Source branch**: Source branch
+3. Click **Run workflow** to identify missing tags on target branch comparing with source
 
 ### Step 2: Cherry-Pick Tags
 1. Navigate to **Actions** → **Cherry Pick Missing Tags**
