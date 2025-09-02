@@ -9,6 +9,7 @@ on:
         type: choice
         options:
           - main
+          - staging
       target:
         description: 'Target branch'
         required: true
