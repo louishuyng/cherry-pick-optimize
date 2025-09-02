@@ -16,6 +16,7 @@ on:
         type: choice
         options:
           - staging
+          - pre-prod
 jobs:
   compare-tags:
     runs-on: ubuntu-latest
