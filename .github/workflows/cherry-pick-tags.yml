@@ -80,7 +80,7 @@ jobs:
           fi
       - name: Cherry-pick missing tags
         if: steps.find-missing.outputs.has_missing == 'true'
-        run: "set -e\n\nBRANCH_NAME=\"cherry-pick/${{ inputs.tag_prefix }}-to-${{ inputs.target_branch }}\"\n\necho \"🌿 Creating new branch: $BRANCH_NAME from ${{ inputs.target_branch }}\"\ngit checkout -b \"$BRANCH_NAME\" origin/${{ inputs.target_branch }}\n\necho \"📋 Reading missing tags (sorted by version order)...\"\nsuccess_tags=\"\"\nfailed_tags=\"\"\ntotal_tags=0\n\n# Process tags one by one from the sorted file (version order: small to large)\nwhile IFS= read -r tag; do\n  if [ -n \"$tag\" ]; then\n    total_tags=$((total_tags + 1))\n    echo \"\"\n    echo \"🏷️  Processing tag [$total_tags]: $tag\"\n    \n    # Get the commit hash for this tag\n    tag_commit=$(git rev-list -n 1 \"$tag\")\n    echo \"   Commit: $tag_commit\"\n    \n    # Attempt cherry-pick\n    if git cherry-pick \"$tag_commit\"; then\n      echo \"   ✅ Successfully cherry-picked $tag\"\n      success_tags=\"$success_tags$tag \"\n    else\n      echo \"   ❌ Failed to cherry-pick $tag\"\n      echo \"   🔄 Aborting cherry-pick to continue with next tag...\"\n      failed_tags=\"$failed_tags$tag \"\n      git cherry-pick --abort || true\n    fi\n  fi\ndone < missing_tags.txt\n\n# Store results for PR step\necho \"$success_tags\" > success_tags.txt\necho \"$failed_tags\" > failed_tags.txt\n\nsuccess_count=$(echo $success_tags | wc -w)\nfailed_count=$(echo $failed_tags | wc -w)\n\necho \"\"\necho \"📊 Cherry-pick Summary:\"\necho \"   Total processed: $total_tags\"\necho \"   ✅ Successful: $success_count\"\necho \"   ❌ Failed: $failed_count\"\n\nif [ $success_count -gt 0 ]; then\n  echo \"\"\n  echo \"🚀 Pushing branch to remote...\"\n  git push origin \"$BRANCH_NAME\"\n  echo \"branch_created=true\" >> $GITHUB_OUTPUT\n  echo \"✅ Branch pushed successfully!\"\nelse\n  echo \"❌ No successful cherry-picks, not creating branch\"\n  echo \"branch_created=false\" >> $GITHUB_OUTPUT\n  exit 1\nfi\n"
+        run: "set -e\n\nBRANCH_NAME=\"cherry-pick/${{ inputs.tag_prefix }}-to-${{ inputs.target_branch }}\"\n\necho \"🌿 Creating new branch: $BRANCH_NAME from ${{ inputs.target_branch }}\"\ngit checkout -b \"$BRANCH_NAME\" origin/${{ inputs.target_branch }}\n\necho \"📋 Reading missing tags (sorted by version order)...\"\nsuccess_tags=\"\"\nconflicted_tags=\"\"\nfailed_tags=\"\"\ntotal_tags=0\n\n# Process tags one by one from the sorted file (version order: small to large)\nwhile IFS= read -r tag; do\n  if [ -n \"$tag\" ]; then\n    total_tags=$((total_tags + 1))\n    echo \"\"\n    echo \"🏷️  Processing tag [$total_tags]: $tag\"\n    \n    # Get the commit hash for this tag\n    tag_commit=$(git rev-list -n 1 \"$tag\")\n    echo \"   Commit: $tag_commit\"\n    \n    # Attempt cherry-pick\n    if git cherry-pick \"$tag_commit\"; then\n      echo \"   ✅ Successfully cherry-picked $tag\"\n      success_tags=\"$success_tags$tag \"\n    else\n      # Check if it's a merge conflict or other error\n      if git status --porcelain | grep -q \"^UU\\|^AA\\|^DD\\|^AU\\|^UA\\|^DU\\|^UD\"; then\n        echo \"   ⚠️  Merge conflict detected for $tag\"\n        echo \"   📝 Committing conflict markers for manual resolution...\"\n        \n        # Add all files (including conflicted ones)\n        git add .\n        \n        # Create a commit with conflict markers\n        git commit -m \"Cherry-pick $tag (CONFLICTS - manual resolution needed)\n        \nOriginal commit: $tag_commit\nTag: $tag\n\n⚠️  This commit contains merge conflicts that need manual resolution.\nConflicted files are marked with <<<<<<< HEAD, =======, and >>>>>>> markers.\nPlease resolve conflicts and amend this commit.\"\n        \n        echo \"   ✅ Committed with conflict markers for $tag\"\n        conflicted_tags=\"$conflicted_tags$tag \"\n      else\n        echo \"   ❌ Failed to cherry-pick $tag (non-conflict error)\"\n        failed_tags=\"$failed_tags$tag \"\n        git cherry-pick --abort || true\n      fi\n    fi\n  fi\ndone < missing_tags.txt\n\n# Store results for PR step\necho \"$success_tags\" > success_tags.txt\necho \"$conflicted_tags\" > conflicted_tags.txt\necho \"$failed_tags\" > failed_tags.txt\n\nsuccess_count=$(echo $success_tags | wc -w)\nconflicted_count=$(echo $conflicted_tags | wc -w)\nfailed_count=$(echo $failed_tags | wc -w)\nprocessed_count=$((success_count + conflicted_count))\n\necho \"\"\necho \"📊 Cherry-pick Summary:\"\necho \"   Total processed: $total_tags\"\necho \"   ✅ Successful: $success_count\"\necho \"   ⚠️  With conflicts: $conflicted_count\"\necho \"   ❌ Failed: $failed_count\"\n\nif [ $processed_count -gt 0 ]; then\n  echo \"\"\n  echo \"🚀 Pushing branch to remote...\"\n  git push origin \"$BRANCH_NAME\"\n  echo \"branch_created=true\" >> $GITHUB_OUTPUT\n  echo \"✅ Branch pushed successfully!\"\nelse\n  echo \"❌ No successful cherry-picks or conflicts to resolve, not creating branch\"\n  echo \"branch_created=false\" >> $GITHUB_OUTPUT\n  exit 1\nfi\n"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Create Pull Request
@@ -89,8 +89,10 @@ jobs:
           BRANCH_NAME="cherry-pick/${{ inputs.tag_prefix }}-to-${{ inputs.target_branch }}"
 
           success_tags=$(cat success_tags.txt | xargs)
+          conflicted_tags=$(cat conflicted_tags.txt | xargs)
           failed_tags=$(cat failed_tags.txt | xargs)
           success_count=$(echo $success_tags | wc -w)
+          conflicted_count=$(echo $conflicted_tags | wc -w)
           failed_count=$(echo $failed_tags | wc -w)
 
           # Build PR body dynamically
@@ -100,6 +102,7 @@ jobs:
 
           ### Results
           - ✅ Successful: $success_count
+          - ⚠️  With conflicts: $conflicted_count
           - ❌ Failed: $failed_count
 
           ### Configuration
@@ -117,14 +120,44 @@ jobs:
           \`\`\`"
           fi
 
+          # Add conflicted tags section
+          if [ -n "$conflicted_tags" ]; then
+            PR_BODY="$PR_BODY
+
+          ### Tags with conflicts (⚠️  MANUAL RESOLUTION REQUIRED):
+          \`\`\`
+          $(echo "$conflicted_tags" | tr ' ' '\n')
+          \`\`\`
+
+          **🔧 How to resolve conflicts:**
+          1. Check out this PR branch locally
+          2. Look for commits with \"CONFLICTS\" in the message
+          3. Find files with conflict markers: \`<<<<<<<\`, \`=======\`, \`>>>>>>>\`
+          4. Resolve conflicts by choosing the correct code
+          5. Remove conflict markers
+          6. Stage the resolved files: \`git add <file>\`
+          7. Amend the conflict commit: \`git commit --amend\`
+          8. Push the changes: \`git push --force-with-lease\`
+
+          **🔍 Find conflicted files:**
+          \`\`\`bash
+          # Search for conflict markers in the repository
+          grep -r \"<<<<<<< HEAD\" .
+          grep -r \"=======\" .
+          grep -r \">>>>>>>\" .
+          \`\`\`"
+          fi
+
           # Add failed tags section
           if [ -n "$failed_tags" ]; then
             PR_BODY="$PR_BODY
 
-          ### Failed tags (manual review needed):
+          ### Failed tags (non-conflict errors):
           \`\`\`
           $(echo "$failed_tags" | tr ' ' '\n')
-          \`\`\`"
+          \`\`\`
+          
+          These tags failed due to non-conflict errors and were not included in this PR. Manual investigation may be required."
           fi
 
           PR_BODY="$PR_BODY
