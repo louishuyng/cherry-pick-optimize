@@ -145,7 +145,7 @@ jobs:
           cat > pr_body.md << 'EOF'
 ## Cherry-pick Summary
           
-This PR cherry-picks missing tags with prefix `${{ inputs.tag_prefix }}` from `${{ inputs.source_branch }}` to `${{ inputs.target_branch }}`.
+This PR cherry-picks missing tags with prefix TAG_PREFIX from SOURCE_BRANCH to TARGET_BRANCH.
 
 ### Results
 - ✅ Successful: SUCCESS_COUNT
@@ -161,6 +161,9 @@ This PR cherry-picks missing tags with prefix `${{ inputs.tag_prefix }}` from `$
 EOF
           
           # Replace placeholders
+          sed -i "s/TAG_PREFIX/${{ inputs.tag_prefix }}/g" pr_body.md
+          sed -i "s/SOURCE_BRANCH/${{ inputs.source_branch }}/g" pr_body.md
+          sed -i "s/TARGET_BRANCH/${{ inputs.target_branch }}/g" pr_body.md
           sed -i "s/SUCCESS_COUNT/$success_count/g" pr_body.md
           sed -i "s/FAILED_COUNT/$failed_count/g" pr_body.md
           
