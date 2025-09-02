@@ -1,0 +1,119 @@
+name: Compare Tags Between Staging and Main
+on:
+  workflow_dispatch:
+jobs:
+  compare-tags:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch all tags
+        run: git fetch --tags
+      - name: Compare tags between staging and main
+        run: |
+          echo "## Tag Comparison Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Get tags from main branch
+          main_tags=$(git tag --merged origin/main | grep -E '^REG-[0-9]+\.' | sort -V)
+
+          # Get tags from staging branch
+          staging_tags=$(git tag --merged origin/staging | grep -E '^REG-[0-9]+\.' | sort -V)
+
+          echo "### Tags in main branch:"
+          echo "$main_tags"
+          echo ""
+
+          echo "### Tags in staging branch:"
+          echo "$staging_tags"
+          echo ""
+
+          # Find tags in staging but not in main
+          staging_only=$(comm -13 <(echo "$main_tags") <(echo "$staging_tags"))
+
+          # Find tags in main but not in staging
+          main_only=$(comm -23 <(echo "$main_tags") <(echo "$staging_tags"))
+
+          echo "### Tags in staging but not in main (with REG-xxxx prefix):"
+          if [ -n "$staging_only" ]; then
+            echo "$staging_only" | sed 's/\(REG-[0-9]\+\)\..*/\1/' | sort -u
+            echo ""
+            echo "**Raw tags:**"
+            echo "$staging_only"
+          else
+            echo "No unique tags in staging"
+          fi
+          echo ""
+
+          echo "### Tags in main but not in staging (with REG-xxxx prefix):"
+          if [ -n "$main_only" ]; then
+            echo "$main_only" | sed 's/\(REG-[0-9]\+\)\..*/\1/' | sort -u
+            echo ""
+            echo "**Raw tags:**"
+            echo "$main_only"
+          else
+            echo "No unique tags in main"
+          fi
+          echo ""
+
+          # Add to GitHub summary
+          echo "### Tags in staging but not in main (REG-xxxx format):" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$staging_only" ]; then
+            echo "$staging_only" | sed 's/\(REG-[0-9]\+\)\..*/\1/' | sort -u >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Raw tags:**" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "$staging_only" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No unique tags in staging" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "### Tags in main but not in staging (REG-xxxx format):" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$main_only" ]; then
+            echo "$main_only" | sed 's/\(REG-[0-9]\+\)\..*/\1/' | sort -u >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Raw tags:**" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "$main_only" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No unique tags in main" >> $GITHUB_STEP_SUMMARY
+          fi
+      - name: Output results as artifacts
+        run: |
+          mkdir -p tag-comparison-results
+
+          # Get tags from main branch
+          main_tags=$(git tag --merged origin/main | grep -E '^REG-[0-9]+\.' | sort -V)
+
+          # Get tags from staging branch
+          staging_tags=$(git tag --merged origin/staging | grep -E '^REG-[0-9]+\.' | sort -V)
+
+          # Find differences
+          staging_only=$(comm -13 <(echo "$main_tags") <(echo "$staging_tags"))
+          main_only=$(comm -23 <(echo "$main_tags") <(echo "$staging_tags"))
+
+          # Create output files
+          echo "Tags in staging but not in main (REG-xxxx format):" > tag-comparison-results/staging-only.txt
+          if [ -n "$staging_only" ]; then
+            echo "$staging_only" | sed 's/\(REG-[0-9]\+\)\..*/\1/' | sort -u >> tag-comparison-results/staging-only.txt
+          else
+            echo "No unique tags in staging" >> tag-comparison-results/staging-only.txt
+          fi
+
+          echo "Tags in main but not in staging (REG-xxxx format):" > tag-comparison-results/main-only.txt
+          if [ -n "$main_only" ]; then
+            echo "$main_only" | sed 's/\(REG-[0-9]\+\)\..*/\1/' | sort -u >> tag-comparison-results/main-only.txt
+          else
+            echo "No unique tags in main" >> tag-comparison-results/main-only.txt
+          fi
+      - name: Upload comparison results
+        uses: actions/upload-artifact@v4
+        with:
+          name: tag-comparison-results
+          path: tag-comparison-results/
+
