@@ -69,9 +69,10 @@ jobs:
 
           if [ -n "$missing_tags" ]; then
             echo "has_missing=true" >> $GITHUB_OUTPUT
-            echo "$missing_tags" > missing_tags.txt
+            # Sort missing tags by version number (small to large)
+            echo "$missing_tags" | tr ' ' '\n' | sort -V > missing_tags.txt
             echo "missing_count=$(echo $missing_tags | wc -w)" >> $GITHUB_OUTPUT
-            echo "Found missing tags: $missing_tags"
+            echo "Found missing tags (will be processed in version order): $missing_tags"
           else
             echo "has_missing=false" >> $GITHUB_OUTPUT
             echo "missing_count=0" >> $GITHUB_OUTPUT
@@ -79,7 +80,7 @@ jobs:
           fi
       - name: Cherry-pick missing tags
         if: steps.find-missing.outputs.has_missing == 'true'
-        run: "set -e\n\nBRANCH_NAME=\"cherry-pick/${{ inputs.tag_prefix }}-to-${{ inputs.target_branch }}\"\n\n# Create new branch\ngit checkout -b \"$BRANCH_NAME\"\n\n# Read missing tags and cherry-pick\nmissing_tags=$(cat missing_tags.txt)\nsuccess_tags=\"\"\nfailed_tags=\"\"\n\nfor tag in $missing_tags; do\n  echo \"Processing tag: $tag\"\n  tag_commit=$(git rev-list -n 1 \"$tag\")\n  \n  if git cherry-pick \"$tag_commit\"; then\n    echo \"✅ Successfully cherry-picked $tag\"\n    success_tags=\"$success_tags$tag \"\n  else\n    echo \"❌ Failed to cherry-pick $tag\"\n    failed_tags=\"$failed_tags$tag \"\n    git cherry-pick --abort || true\n  fi\ndone\n\n# Store results for PR step\necho \"$success_tags\" > success_tags.txt\necho \"$failed_tags\" > failed_tags.txt\n\nsuccess_count=$(echo $success_tags | wc -w)\nfailed_count=$(echo $failed_tags | wc -w)\n\necho \"Results: $success_count successful, $failed_count failed\"\n\nif [ $success_count -gt 0 ]; then\n  git push origin \"$BRANCH_NAME\"\n  echo \"branch_created=true\" >> $GITHUB_OUTPUT\nelse\n  echo \"branch_created=false\" >> $GITHUB_OUTPUT\n  exit 1\nfi\n"
+        run: "set -e\n\nBRANCH_NAME=\"cherry-pick/${{ inputs.tag_prefix }}-to-${{ inputs.target_branch }}\"\n\necho \"🌿 Creating new branch: $BRANCH_NAME from ${{ inputs.target_branch }}\"\ngit checkout -b \"$BRANCH_NAME\" origin/${{ inputs.target_branch }}\n\necho \"📋 Reading missing tags (sorted by version order)...\"\nsuccess_tags=\"\"\nfailed_tags=\"\"\ntotal_tags=0\n\n# Process tags one by one from the sorted file (version order: small to large)\nwhile IFS= read -r tag; do\n  if [ -n \"$tag\" ]; then\n    total_tags=$((total_tags + 1))\n    echo \"\"\n    echo \"🏷️  Processing tag [$total_tags]: $tag\"\n    \n    # Get the commit hash for this tag\n    tag_commit=$(git rev-list -n 1 \"$tag\")\n    echo \"   Commit: $tag_commit\"\n    \n    # Attempt cherry-pick\n    if git cherry-pick \"$tag_commit\"; then\n      echo \"   ✅ Successfully cherry-picked $tag\"\n      success_tags=\"$success_tags$tag \"\n    else\n      echo \"   ❌ Failed to cherry-pick $tag\"\n      echo \"   🔄 Aborting cherry-pick to continue with next tag...\"\n      failed_tags=\"$failed_tags$tag \"\n      git cherry-pick --abort || true\n    fi\n  fi\ndone < missing_tags.txt\n\n# Store results for PR step\necho \"$success_tags\" > success_tags.txt\necho \"$failed_tags\" > failed_tags.txt\n\nsuccess_count=$(echo $success_tags | wc -w)\nfailed_count=$(echo $failed_tags | wc -w)\n\necho \"\"\necho \"📊 Cherry-pick Summary:\"\necho \"   Total processed: $total_tags\"\necho \"   ✅ Successful: $success_count\"\necho \"   ❌ Failed: $failed_count\"\n\nif [ $success_count -gt 0 ]; then\n  echo \"\"\n  echo \"🚀 Pushing branch to remote...\"\n  git push origin \"$BRANCH_NAME\"\n  echo \"branch_created=true\" >> $GITHUB_OUTPUT\n  echo \"✅ Branch pushed successfully!\"\nelse\n  echo \"❌ No successful cherry-picks, not creating branch\"\n  echo \"branch_created=false\" >> $GITHUB_OUTPUT\n  exit 1\nfi\n"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Create Pull Request
