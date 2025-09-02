@@ -22,7 +22,7 @@ jobs:
           echo "Commit message: $COMMIT_MSG"
 
           # Extract REG-xxxx pattern
-          if [[ $COMMIT_MSG =~ \[REG-([0-9]+)\] ]]; then
+          if [[ $COMMIT_MSG =~ REG-([0-9]+) ]]; then
             REG_NUMBER=${BASH_REMATCH[1]}
             echo "Found REG number: $REG_NUMBER"
             echo "reg_number=$REG_NUMBER" >> $GITHUB_OUTPUT
@@ -71,4 +71,4 @@ jobs:
       - name: Skip tagging
         if: steps.extract-reg.outputs.has_reg == 'false'
         run: |-
-          echo "Skipping tag creation - commit message does not contain [REG-xxxx] pattern"
+          echo "Skipping tag creation - commit message does not contain REG-xxxx pattern"
