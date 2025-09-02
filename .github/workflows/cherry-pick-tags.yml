@@ -41,172 +41,160 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Fetch all branches and tags
+      - name: Setup and find missing tags
+        id: find-missing
         run: |
+          set -e
+          
+          # Fetch all data
           git fetch --all --tags
           git checkout ${{ inputs.target_branch }}
           git pull origin ${{ inputs.target_branch }}
-
-      - name: Find missing tags
-        id: find-missing
-        run: |
+          
           echo "Searching for tags with prefix: ${{ inputs.tag_prefix }}"
-          echo "Source branch: ${{ inputs.source_branch }}"
-          echo "Target branch: ${{ inputs.target_branch }}"
-
-          # Get tags from source branch with the specified prefix
-          source_tags=$(git tag --merged origin/${{ inputs.source_branch }} | grep -E "^${{ inputs.tag_prefix }}\." | sort -V || echo "")
           
-          # Get tags from target branch with the specified prefix
-          target_tags=$(git tag --merged origin/${{ inputs.target_branch }} | grep -E "^${{ inputs.tag_prefix }}\." | sort -V || echo "")
-
-          echo "Tags in source branch (${{ inputs.source_branch }}):"
-          echo "$source_tags"
-          echo ""
+          # Get tags with specified prefix from both branches
+          source_tags=$(git tag --merged origin/${{ inputs.source_branch }} | grep "^${{ inputs.tag_prefix }}\." | sort -V || true)
+          target_tags=$(git tag --merged origin/${{ inputs.target_branch }} | grep "^${{ inputs.tag_prefix }}\." | sort -V || true)
           
-          echo "Tags in target branch (${{ inputs.target_branch }}):"
-          echo "$target_tags"
-          echo ""
-
-          # Find tags in source but not in target
+          echo "Source tags: $source_tags"
+          echo "Target tags: $target_tags"
+          
+          # Find missing tags
+          missing_tags=""
           if [ -n "$source_tags" ]; then
-            if [ -n "$target_tags" ]; then
-              missing_tags=$(comm -23 <(echo "$source_tags") <(echo "$target_tags"))
-            else
-              missing_tags="$source_tags"
-            fi
-          else
-            missing_tags=""
+            for tag in $source_tags; do
+              if ! echo "$target_tags" | grep -q "^$tag$"; then
+                missing_tags="$missing_tags$tag "
+              fi
+            done
           fi
-
-          echo "Missing tags in target branch:"
-          echo "$missing_tags"
-
+          
+          missing_tags=$(echo $missing_tags | xargs)  # trim whitespace
+          
           if [ -n "$missing_tags" ]; then
             echo "has_missing=true" >> $GITHUB_OUTPUT
-            # Store missing tags in a file for the next step
             echo "$missing_tags" > missing_tags.txt
-            echo "missing_count=$(echo '$missing_tags' | wc -l)" >> $GITHUB_OUTPUT
+            echo "missing_count=$(echo $missing_tags | wc -w)" >> $GITHUB_OUTPUT
+            echo "Found missing tags: $missing_tags"
           else
             echo "has_missing=false" >> $GITHUB_OUTPUT
             echo "missing_count=0" >> $GITHUB_OUTPUT
+            echo "No missing tags found"
           fi
 
-      - name: Create cherry-pick branch and PR
+      - name: Cherry-pick missing tags
         if: steps.find-missing.outputs.has_missing == 'true'
         run: |
-          BRANCH_NAME="cherry-pick/${{ inputs.tag_prefix }}-to-${{ inputs.target_branch }}"
-          PR_TITLE="Cherry-pick ${{ inputs.tag_prefix }}.* tags to ${{ inputs.target_branch }}"
+          set -e
           
-          # Create and switch to new branch
+          BRANCH_NAME="cherry-pick/${{ inputs.tag_prefix }}-to-${{ inputs.target_branch }}"
+          
+          # Create new branch
           git checkout -b "$BRANCH_NAME"
           
-          # Read missing tags
+          # Read missing tags and cherry-pick
           missing_tags=$(cat missing_tags.txt)
-          echo "Cherry-picking missing tags:"
-          echo "$missing_tags"
-
-          # Cherry-pick each missing tag
-          success_count=0
+          success_tags=""
           failed_tags=""
           
           for tag in $missing_tags; do
-            echo "Cherry-picking commits for tag: $tag"
-            
-            # Get the commit hash for this tag
+            echo "Processing tag: $tag"
             tag_commit=$(git rev-list -n 1 "$tag")
-            echo "Tag $tag points to commit: $tag_commit"
             
-            # Attempt cherry-pick
             if git cherry-pick "$tag_commit"; then
               echo "✅ Successfully cherry-picked $tag"
-              success_count=$((success_count + 1))
+              success_tags="$success_tags$tag "
             else
               echo "❌ Failed to cherry-pick $tag"
               failed_tags="$failed_tags$tag "
-              # Abort the cherry-pick to continue with next tag
               git cherry-pick --abort || true
             fi
           done
-
-          echo "Cherry-pick completed:"
-          echo "- Successful: $success_count"
-          echo "- Failed: $(echo $failed_tags | wc -w)"
-
-          # Push the branch if there were any successful cherry-picks
+          
+          # Store results for PR step
+          echo "$success_tags" > success_tags.txt
+          echo "$failed_tags" > failed_tags.txt
+          
+          success_count=$(echo $success_tags | wc -w)
+          failed_count=$(echo $failed_tags | wc -w)
+          
+          echo "Results: $success_count successful, $failed_count failed"
+          
           if [ $success_count -gt 0 ]; then
             git push origin "$BRANCH_NAME"
-            
-            # Create PR body
-            PR_BODY="## Cherry-pick Summary
-
-This PR cherry-picks missing tags with prefix \`${{ inputs.tag_prefix }}\` from \`${{ inputs.source_branch }}\` to \`${{ inputs.target_branch }}\`.
-
-### Successfully cherry-picked tags:
-\`\`\`
-$(echo "$missing_tags" | head -n $success_count)
-\`\`\`
-
-### Cherry-pick Statistics:
-- ✅ Successful: $success_count
-- ❌ Failed: $(echo $failed_tags | wc -w)
-
-### Original Request:
-- **Tag prefix**: \`${{ inputs.tag_prefix }}\`
-- **Source branch**: \`${{ inputs.source_branch }}\`
-- **Target branch**: \`${{ inputs.target_branch }}\`
-
----
-🤖 *This PR was automatically created by the Cherry Pick Missing Tags workflow*"
-          
-          # Add failed tags section if any
-          if [ -n "$failed_tags" ]; then
-            PR_BODY="$PR_BODY
-
-### Failed tags (manual intervention required):
-\`\`\`
-$failed_tags
-\`\`\`"
-          fi
-
-            # Create the PR using GitHub CLI
-            gh pr create \
-              --title "$PR_TITLE" \
-              --body "$PR_BODY" \
-              --base "${{ inputs.target_branch }}" \
-              --head "$BRANCH_NAME"
-            
-            echo "PR created successfully!"
+            echo "branch_created=true" >> $GITHUB_OUTPUT
           else
-            echo "No successful cherry-picks, cleaning up branch"
-            git checkout ${{ inputs.target_branch }}
-            git branch -D "$BRANCH_NAME"
-            echo "All cherry-picks failed. Please check the tags manually."
+            echo "branch_created=false" >> $GITHUB_OUTPUT
             exit 1
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: No missing tags found
+      - name: Create Pull Request
+        if: steps.find-missing.outputs.has_missing == 'true'
+        run: |
+          BRANCH_NAME="cherry-pick/${{ inputs.tag_prefix }}-to-${{ inputs.target_branch }}"
+          
+          success_tags=$(cat success_tags.txt | xargs)
+          failed_tags=$(cat failed_tags.txt | xargs)
+          success_count=$(echo $success_tags | wc -w)
+          failed_count=$(echo $failed_tags | wc -w)
+          
+          # Create PR with simplified body
+          cat > pr_body.md << 'EOF'
+## Cherry-pick Summary
+          
+This PR cherry-picks missing tags with prefix `${{ inputs.tag_prefix }}` from `${{ inputs.source_branch }}` to `${{ inputs.target_branch }}`.
+
+### Results
+- ✅ Successful: SUCCESS_COUNT
+- ❌ Failed: FAILED_COUNT
+
+### Configuration
+- **Tag prefix**: `${{ inputs.tag_prefix }}`
+- **Source branch**: `${{ inputs.source_branch }}`
+- **Target branch**: `${{ inputs.target_branch }}`
+
+---
+🤖 *Auto-generated by Cherry Pick workflow*
+EOF
+          
+          # Replace placeholders
+          sed -i "s/SUCCESS_COUNT/$success_count/g" pr_body.md
+          sed -i "s/FAILED_COUNT/$failed_count/g" pr_body.md
+          
+          # Add successful tags if any
+          if [ -n "$success_tags" ]; then
+            echo "" >> pr_body.md
+            echo "### Successfully cherry-picked:" >> pr_body.md
+            echo "\`\`\`" >> pr_body.md
+            echo "$success_tags" | tr ' ' '\n' >> pr_body.md
+            echo "\`\`\`" >> pr_body.md
+          fi
+          
+          # Add failed tags if any
+          if [ -n "$failed_tags" ]; then
+            echo "" >> pr_body.md
+            echo "### Failed tags (manual review needed):" >> pr_body.md
+            echo "\`\`\`" >> pr_body.md
+            echo "$failed_tags" | tr ' ' '\n' >> pr_body.md
+            echo "\`\`\`" >> pr_body.md
+          fi
+          
+          # Create PR
+          gh pr create \
+            --title "Cherry-pick ${{ inputs.tag_prefix }}.* tags to ${{ inputs.target_branch }}" \
+            --body-file pr_body.md \
+            --base "${{ inputs.target_branch }}" \
+            --head "$BRANCH_NAME"
+          
+          echo "✅ PR created successfully"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: No missing tags
         if: steps.find-missing.outputs.has_missing == 'false'
         run: |
           echo "✅ No missing tags found!"
-          echo "All tags with prefix '${{ inputs.tag_prefix }}' from '${{ inputs.source_branch }}' are already present in '${{ inputs.target_branch }}'."
-
-      - name: Summary
-        run: |
-          echo "## Cherry-pick Workflow Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Configuration:**" >> $GITHUB_STEP_SUMMARY
-          echo "- Tag prefix: \`${{ inputs.tag_prefix }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Source branch: \`${{ inputs.source_branch }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Target branch: \`${{ inputs.target_branch }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          if [ "${{ steps.find-missing.outputs.has_missing }}" == "true" ]; then
-            echo "**Result:** Found ${{ steps.find-missing.outputs.missing_count }} missing tag(s)" >> $GITHUB_STEP_SUMMARY
-            echo "✅ Created PR with cherry-picked commits" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "**Result:** No missing tags found" >> $GITHUB_STEP_SUMMARY
-            echo "✅ All tags are already present in target branch" >> $GITHUB_STEP_SUMMARY
-          fi
+          echo "All tags with prefix '${{ inputs.tag_prefix }}' are already in '${{ inputs.target_branch }}'."
